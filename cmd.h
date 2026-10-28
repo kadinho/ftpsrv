@@ -34,6 +34,7 @@ typedef struct ftp_env {
   int self2elf;
   off_t data_offset;
   char rename_path[PATH_MAX];
+  char copy_path[PATH_MAX];
   struct sockaddr_in data_addr;
   void *readbuf;
   size_t readbuf_size;
@@ -81,6 +82,19 @@ int ftp_cmd_KILL(ftp_env_t *env, const char* arg);
 int ftp_cmd_MTRW(ftp_env_t *env, const char* arg);
 int ftp_cmd_CHMOD(ftp_env_t *env, const char* arg);
 int ftp_cmd_SELF(ftp_env_t *env, const char* arg);
+
+
+/**
+ * Server-side file management commands (ps5-ferry).
+ **/
+int ftp_cmd_CANCEL(ftp_env_t *env, const char* arg);
+int ftp_cmd_CPFR(ftp_env_t *env, const char* arg);
+int ftp_cmd_CPTO(ftp_env_t *env, const char* arg);
+int ftp_cmd_DF(ftp_env_t *env, const char* arg);
+int ftp_cmd_DU(ftp_env_t *env, const char* arg);
+int ftp_cmd_HASH(ftp_env_t *env, const char* arg);
+int ftp_cmd_JOBS(ftp_env_t *env, const char* arg);
+int ftp_cmd_RMTREE(ftp_env_t *env, const char* arg);
 
 
 /**

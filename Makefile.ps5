@@ -32,6 +32,7 @@ CFLAGS := -Wall -Werror -DVERSION_TAG=\"$(VERSION_TAG)\" -I.
 CFLAGS += -DTITLE_ID=\"$(TITLE_ID)\"
 
 SOURCE := srv.c cmd.c notify.c io.c self.c sha256.c
+SOURCE += ferry.c cmd-ferry.c
 SOURCE += main-prospero.c cmd-prospero.c self-prospero.c
 SOURCE += io-freebsd.c
 

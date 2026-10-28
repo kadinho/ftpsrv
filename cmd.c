@@ -367,6 +367,14 @@ ftp_cmd_FEAT(ftp_env_t *env, const char *arg) {
                            " KILL\r\n"
                            " MTRW\r\n"
                            " SELF\r\n"
+                           " SITE CPFR\r\n"
+                           " SITE CPTO\r\n"
+                           " SITE JOBS\r\n"
+                           " SITE CANCEL\r\n"
+                           " SITE DF\r\n"
+                           " SITE DU\r\n"
+                           " SITE RMTREE\r\n"
+                           " SITE HASH\r\n"
                            "211 End\r\n");
 }
 
@@ -754,6 +762,10 @@ ftp_cmd_RNTO(ftp_env_t *env, const char* arg) {
 
   ftp_abspath(env, pathbuf, arg);
   if(rename(env->rename_path, pathbuf)) {
+    if(errno == EXDEV) {
+      return ftp_active_printf(env, "553 Cross-device rename, use SITE CPFR/CPTO "
+			       "then SITE RMTREE\r\n");
+    }
     return ftp_perror(env);
   }
 

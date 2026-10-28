@@ -77,6 +77,16 @@ static ftp_command_t commands[] = {
   {"SELF", ftp_cmd_SELF},
   {"CHMOD", ftp_cmd_CHMOD},
 
+  // server-side file management (ps5-ferry)
+  {"CANCEL", ftp_cmd_CANCEL},
+  {"CPFR",   ftp_cmd_CPFR},
+  {"CPTO",   ftp_cmd_CPTO},
+  {"DF",     ftp_cmd_DF},
+  {"DU",     ftp_cmd_DU},
+  {"HASH",   ftp_cmd_HASH},
+  {"JOBS",   ftp_cmd_JOBS},
+  {"RMTREE", ftp_cmd_RMTREE},
+
   // duplicates that ensure commands are 4 bytes long
   {"XCUP", ftp_cmd_CDUP},
   {"XMKD", ftp_cmd_MKD},
@@ -219,6 +229,7 @@ ftp_thread(void *args) {
 
   strcpy(env.cwd, "/");
   memset(env.rename_path, 0, sizeof(env.rename_path));
+  memset(env.copy_path, 0, sizeof(env.copy_path));
   memset(&env.data_addr, 0, sizeof(env.data_addr));
 
   opt = 1;

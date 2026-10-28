@@ -1,4 +1,35 @@
-# ftpsrv
+# ps5-ferry
+A fork of [ps5-payload-dev/ftpsrv][upstream] that adds **server-side file
+management**: copy, size, free space, delete and hash run *on the console*, so
+moving a game from `/mnt/ext1` to `/data` never routes the bytes through a PC.
+It is a drop-in replacement: same port (2121), and it kills a running
+`ftpsrv.elf` on start.
+
+### Extra SITE commands
+| Command | Reply | What it does |
+|---|---|---|
+| `CPFR <src>` + `CPTO <dst>` | `250 Copy job N started` | Background recursive copy. Resumable: files already at `dst` with the same size are skipped. Checks free space first, fsyncs and size-checks every file, keeps modes and symlinks. Refuses to copy a tree into itself. A PS5 notification is shown when it ends. |
+| `JOBS [N]` | `211 job=…;state=…;pct=…;bytes=done/total;…` | Progress of one or all jobs (last 8 are kept, across connections). |
+| `CANCEL N` | `200` | Stop a running job (re-run the copy later to resume). |
+| `DF [path]` | `213 avail=…;free=…;total=…` | Free space of the file system holding `path`. |
+| `DU [path]` | `213 bytes=…;files=…;dirs=…` | Recursive size. |
+| `RMTREE <path>` | `250 Removed N files, M dirs` | Recursive delete, no symlink following. Refuses paths shallower than 3 levels (e.g. `/data/homebrew`) and paths with `..`. |
+| `HASH <file>` | `213 SHA-256 <hex>` | SHA-256 computed on the console (synchronous, slow for huge files). |
+
+`RNTO` across file systems now answers `553 Cross-device rename, use SITE
+CPFR/CPTO then SITE RMTREE` instead of a bare errno.
+
+### PC client
+```console
+$ tools/ferry.py 192.168.40.14 df /data
+$ tools/ferry.py 192.168.40.14 cp "/mnt/ext1/homebrew/GAME" "/data/homebrew/GAME"
+$ tools/ferry.py 192.168.40.14 jobs
+$ tools/ferry.py 192.168.40.14 rm "/mnt/ext1/homebrew/GAME"   # after testing the copy
+```
+
+---
+
+# ftpsrv (upstream README)
 This is a simple FTP server that can be executed on a Playstation 4 or
 Playstation 5 that has been jailbroken and is running an ELF loader.
 The FTP server accepts connection on port 2121.
@@ -68,6 +99,7 @@ to discuss the solution properly before you commit time and effort.
 ## License
 ftpsrv is licensed under the GPLv3+.
 
+[upstream]: https://github.com/ps5-payload-dev/ftpsrv
 [sdk-ps4]: https://github.com/ps4-payload-dev/sdk
 [sdk-ps5]: https://github.com/ps5-payload-dev/sdk
 [websrv]: https://github.com/ps5-payload-dev/websrv
