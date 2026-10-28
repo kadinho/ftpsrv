@@ -44,10 +44,12 @@ ftp_ferry_print_job(ftp_env_t *env, const ferry_job_t *job, int last) {
   }
 
   return ftp_active_printf(env,
-			   "211%cjob=%d;state=%s;pct=%llu;bytes=%llu/%llu;"
-			   "needed=%llu;files=%llu/%llu;skipped=%llu;secs=%lld;"
-			   "src=%s;dst=%s;current=%s;error=%s\r\n",
+			   "211%cjob=%d;kind=%s;state=%s;pct=%llu;"
+			   "bytes=%llu/%llu;needed=%llu;files=%llu/%llu;"
+			   "skipped=%llu;secs=%lld;src=%s;dst=%s;current=%s;"
+			   "error=%s\r\n",
 			   last ? ' ' : '-', job->id,
+			   ferry_kind_name(job->kind),
 			   ferry_state_name(job->state), pct,
 			   (unsigned long long)job->bytes_done,
 			   (unsigned long long)job->bytes_total,
@@ -198,14 +200,13 @@ ftp_cmd_DU(ftp_env_t *env, const char* arg) {
 
 
 /**
- * Recursively delete a path.
+ * Start a background recursive delete of a path.
  **/
 int
 ftp_cmd_RMTREE(ftp_env_t *env, const char* arg) {
   char pathbuf[PATH_MAX];
-  uint64_t files = 0;
-  uint64_t dirs = 0;
   int depth = 0;
+  int id;
 
   if(!arg[0]) {
     return ftp_active_printf(env, "501 Usage: RMTREE <PATH>\r\n");
@@ -226,13 +227,11 @@ ftp_cmd_RMTREE(ftp_env_t *env, const char* arg) {
 			     "than %d levels\r\n", FERRY_RMTREE_MIN_DEPTH);
   }
 
-  if(ferry_rmtree(pathbuf, &files, &dirs)) {
+  if((id=ferry_remove_start(pathbuf)) < 0) {
     return ftp_perror(env);
   }
 
-  return ftp_active_printf(env, "250 Removed %llu files, %llu dirs\r\n",
-			   (unsigned long long)files,
-			   (unsigned long long)dirs);
+  return ftp_active_printf(env, "250 Remove job %d started\r\n", id);
 }
 
 

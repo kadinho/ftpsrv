@@ -34,12 +34,13 @@ along with this program; see the file COPYING. If not, see
 
 
 /**
- * Life cycle of a copy job.
+ * Life cycle of a job.
  **/
 typedef enum ferry_state {
   FERRY_FREE = 0,
   FERRY_SCANNING,
   FERRY_COPYING,
+  FERRY_REMOVING,
   FERRY_DONE,
   FERRY_FAILED,
   FERRY_CANCELLED,
@@ -47,10 +48,20 @@ typedef enum ferry_state {
 
 
 /**
- * Snapshot of a copy job, safe to read without holding any lock.
+ * What a job does.
+ **/
+typedef enum ferry_kind {
+  FERRY_COPY = 0,
+  FERRY_REMOVE,
+} ferry_kind_t;
+
+
+/**
+ * Snapshot of a job, safe to read without holding any lock.
  **/
 typedef struct ferry_job {
   int           id;
+  ferry_kind_t  kind;
   ferry_state_t state;
   int           cancel;
 
@@ -61,7 +72,7 @@ typedef struct ferry_job {
 
   uint64_t bytes_total;  // bytes in the source tree
   uint64_t bytes_needed; // bytes not yet present at the destination
-  uint64_t bytes_done;   // bytes copied or skipped (already present)
+  uint64_t bytes_done;   // bytes copied, skipped (already present) or removed
   uint64_t files_total;
   uint64_t files_done;
   uint64_t files_skipped;
@@ -77,6 +88,13 @@ typedef struct ferry_job {
  * an interrupted job resumes it. Returns the job id, or -1 with errno set.
  **/
 int ferry_copy_start(const char *src, const char *dst);
+
+
+/**
+ * Start a background recursive removal of PATH, without following symlinks.
+ * Returns the job id, or -1 with errno set.
+ **/
+int ferry_remove_start(const char *path);
 
 
 /**
@@ -105,16 +123,16 @@ const char* ferry_state_name(ferry_state_t state);
 
 
 /**
+ * Human-readable name of a job kind.
+ **/
+const char* ferry_kind_name(ferry_kind_t kind);
+
+
+/**
  * Sum the size of all regular files below PATH.
  **/
 int ferry_du(const char *path, uint64_t *bytes, uint64_t *files,
 	     uint64_t *dirs);
-
-
-/**
- * Recursively remove PATH without following symlinks.
- **/
-int ferry_rmtree(const char *path, uint64_t *files, uint64_t *dirs);
 
 
 /**

@@ -8,7 +8,7 @@ The bytes never leave the console: the PC only sends control commands.
     ferry.py HOST cp SRC DST [--detach]   server-side copy (resumable), shows progress
     ferry.py HOST jobs [ID]               list copy jobs
     ferry.py HOST cancel ID               stop a running copy
-    ferry.py HOST rm PATH                 recursive delete (asks first)
+    ferry.py HOST rm PATH [--detach]      recursive delete (asks first), shows progress
     ferry.py HOST hash PATH               SHA-256 of a file, computed on the console
 
 Typical move: `cp` -> test the game from DST -> `rm` the source.
@@ -50,7 +50,10 @@ def show_job(j):
     print(f"#{j['job']} {j['state']:<9} {j['pct']:>3}%  "
           f"{human(done)}/{human(total)}  files {j['files']} "
           f"(skipped {j['skipped']})  {human(done / secs)}/s")
-    print(f"    {j['src']} -> {j['dst']}")
+    if j.get("kind") == "remove":
+        print(f"    remove {j['src']}")
+    else:
+        print(f"    {j['src']} -> {j['dst']}")
     if j.get("current"):
         print(f"    now: {j['current']}")
     if j.get("error"):
@@ -65,18 +68,21 @@ def cmd_cp(ftp, args):
 
     site(ftp, f"CPFR {args.src}")
     reply = site(ftp, f"CPTO {args.dst}")
-    job = reply.split()[3]
     print(reply)
     if args.detach:
         return 0
+    return wait_job(ftp, reply.split()[3])
 
+
+def wait_job(ftp, job):
+    """Poll a job until it leaves the running states; 0 if it ended done."""
     while True:
         j = fields(site(ftp, f"JOBS {job}"))
         sys.stdout.write(f"\r{j['state']:<9} {j['pct']:>3}%  "
                          f"{human(j['bytes'].split('/')[0])}  "
                          f"files {j['files']}   ")
         sys.stdout.flush()
-        if j["state"] not in ("scanning", "copying"):
+        if j["state"] not in ("scanning", "copying", "removing"):
             print()
             show_job(j)
             return 0 if j["state"] == "done" else 1
@@ -101,6 +107,8 @@ def main():
     rm = sub.add_parser("rm")
     rm.add_argument("path")
     rm.add_argument("-y", "--yes", action="store_true")
+    rm.add_argument("--detach", action="store_true",
+                    help="start the job and return; poll with `jobs`")
     sub.add_parser("hash").add_argument("path")
     args = ap.parse_args()
 
@@ -132,7 +140,11 @@ def main():
             print(f"{args.path}: {human(f['bytes'])}, {f['files']} files")
             if not args.yes and input("delete it? [y/N] ").lower() != "y":
                 return 1
-            print(site(ftp, f"RMTREE {args.path}"))
+            reply = site(ftp, f"RMTREE {args.path}")
+            print(reply)
+            if args.detach:
+                return 0
+            return wait_job(ftp, reply.split()[3])
         elif args.cmd == "hash":
             print(site(ftp, f"HASH {args.path}"))
     except ftplib.error_perm as e:

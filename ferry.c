@@ -49,11 +49,25 @@ ferry_state_name(ferry_state_t state) {
   switch(state) {
   case FERRY_SCANNING:  return "scanning";
   case FERRY_COPYING:   return "copying";
+  case FERRY_REMOVING:  return "removing";
   case FERRY_DONE:      return "done";
   case FERRY_FAILED:    return "failed";
   case FERRY_CANCELLED: return "cancelled";
   default:              return "free";
   }
+}
+
+
+const char*
+ferry_kind_name(ferry_kind_t kind) {
+  return kind == FERRY_REMOVE ? "remove" : "copy";
+}
+
+
+static int
+ferry_is_running(ferry_state_t state) {
+  return state == FERRY_SCANNING || state == FERRY_COPYING ||
+         state == FERRY_REMOVING;
 }
 
 
@@ -337,9 +351,11 @@ ferry_finish(ferry_job_t *job, ferry_state_t state) {
   pthread_mutex_unlock(&g_lock);
 
   if(state == FERRY_DONE) {
-    notify("ferry #%d done: %llu files, %llu MiB\n%s",
-	   job->id, (unsigned long long)job->files_done,
-	   (unsigned long long)(job->bytes_done >> 20), job->dst);
+    notify("ferry #%d %s done: %llu files, %llu MiB\n%s",
+	   job->id, ferry_kind_name(job->kind),
+	   (unsigned long long)job->files_done,
+	   (unsigned long long)(job->bytes_done >> 20),
+	   job->kind == FERRY_REMOVE ? job->src : job->dst);
   } else {
     notify("ferry #%d %s\n%s", job->id, ferry_state_name(state),
 	   job->error[0] ? job->error : job->src);
@@ -408,7 +424,7 @@ ferry_alloc_job(void) {
     if(g_jobs[i].state == FERRY_FREE) {
       return &g_jobs[i];
     }
-    if(g_jobs[i].state == FERRY_SCANNING || g_jobs[i].state == FERRY_COPYING) {
+    if(ferry_is_running(g_jobs[i].state)) {
       continue;
     }
     if(!oldest || g_jobs[i].finished < oldest->finished) {
@@ -420,17 +436,57 @@ ferry_alloc_job(void) {
 }
 
 
+/**
+ * Allocate a job and run FN on it in a detached thread.
+ **/
+static int
+ferry_job_start(ferry_kind_t kind, const char *src, const char *dst,
+		void* (*fn)(void*)) {
+  pthread_attr_t attr;
+  ferry_job_t *job;
+  pthread_t trd;
+  int id;
+
+  pthread_mutex_lock(&g_lock);
+  if(!(job=ferry_alloc_job())) {
+    pthread_mutex_unlock(&g_lock);
+    errno = EBUSY;
+    return -1;
+  }
+
+  memset(job, 0, sizeof(*job));
+  job->id = id = g_next_id++;
+  job->kind = kind;
+  job->state = FERRY_SCANNING;
+  job->started = time(NULL);
+  snprintf(job->src, sizeof(job->src), "%s", src);
+  snprintf(job->dst, sizeof(job->dst), "%s", dst);
+  pthread_mutex_unlock(&g_lock);
+
+  pthread_attr_init(&attr);
+  pthread_attr_setstacksize(&attr, FERRY_STACK_SIZE);
+  pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+  if(pthread_create(&trd, &attr, fn, job)) {
+    pthread_attr_destroy(&attr);
+    pthread_mutex_lock(&g_lock);
+    job->state = FERRY_FREE;
+    pthread_mutex_unlock(&g_lock);
+    errno = EAGAIN;
+    return -1;
+  }
+  pthread_attr_destroy(&attr);
+
+  return id;
+}
+
+
 int
 ferry_copy_start(const char *src, const char *dst) {
   char src_real[PATH_MAX];
   char dst_parent[PATH_MAX];
   char dst_real[PATH_MAX];
   char dst_base[PATH_MAX];
-  pthread_attr_t attr;
-  ferry_job_t *job;
-  pthread_t trd;
   size_t len;
-  int id;
 
   if(!realpath(src, src_real)) {
     return -1;
@@ -453,35 +509,109 @@ ferry_copy_start(const char *src, const char *dst) {
     return -1;
   }
 
-  pthread_mutex_lock(&g_lock);
-  if(!(job=ferry_alloc_job())) {
-    pthread_mutex_unlock(&g_lock);
-    errno = EBUSY;
+  return ferry_job_start(FERRY_COPY, src_real, dst_real, ferry_copy_thread);
+}
+
+
+/**
+ * Recursively remove PATH, updating the job's progress as files go.
+ **/
+static int
+ferry_remove_tree(ferry_job_t *job, const char *path) {
+  struct dirent *ent;
+  struct stat st;
+  DIR *dir;
+  char *p;
+  int err = 0;
+
+  if(job->cancel) {
+    errno = ECANCELED;
     return -1;
   }
 
-  memset(job, 0, sizeof(*job));
-  job->id = id = g_next_id++;
-  job->state = FERRY_SCANNING;
-  job->started = time(NULL);
-  snprintf(job->src, sizeof(job->src), "%s", src_real);
-  snprintf(job->dst, sizeof(job->dst), "%s", dst_real);
+  if(lstat(path, &st)) {
+    ferry_set_error(job, "lstat", path);
+    return -1;
+  }
+
+  if(!S_ISDIR(st.st_mode)) {
+    ferry_set_current(job, path);
+    if(unlink(path)) {
+      ferry_set_error(job, "unlink", path);
+      return -1;
+    }
+    if(S_ISREG(st.st_mode)) {
+      job->files_done++;
+      job->bytes_done += st.st_size;
+    }
+    return 0;
+  }
+
+  if(!(dir=opendir(path))) {
+    ferry_set_error(job, "opendir", path);
+    return -1;
+  }
+
+  while(!err && (ent=readdir(dir))) {
+    if(ferry_is_dot(ent->d_name)) {
+      continue;
+    }
+    if(!(p=ferry_join(path, ent->d_name))) {
+      err = -1;
+    } else {
+      err = ferry_remove_tree(job, p);
+      free(p);
+    }
+  }
+
+  closedir(dir);
+  if(err) {
+    return err;
+  }
+
+  if(rmdir(path)) {
+    ferry_set_error(job, "rmdir", path);
+    return -1;
+  }
+
+  return 0;
+}
+
+
+static void*
+ferry_remove_thread(void *args) {
+  ferry_job_t *job = args;
+  uint64_t dirs = 0;
+
+  if(ferry_du(job->src, &job->bytes_total, &job->files_total, &dirs)) {
+    ferry_set_error(job, "scan", job->src);
+    ferry_finish(job, FERRY_FAILED);
+    return NULL;
+  }
+
+  pthread_mutex_lock(&g_lock);
+  job->state = FERRY_REMOVING;
   pthread_mutex_unlock(&g_lock);
 
-  pthread_attr_init(&attr);
-  pthread_attr_setstacksize(&attr, FERRY_STACK_SIZE);
-  pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-  if(pthread_create(&trd, &attr, ferry_copy_thread, job)) {
-    pthread_attr_destroy(&attr);
-    pthread_mutex_lock(&g_lock);
-    job->state = FERRY_FREE;
-    pthread_mutex_unlock(&g_lock);
-    errno = EAGAIN;
+  if(ferry_remove_tree(job, job->src)) {
+    ferry_finish(job, job->cancel ? FERRY_CANCELLED : FERRY_FAILED);
+  } else {
+    ferry_finish(job, FERRY_DONE);
+  }
+
+  return NULL;
+}
+
+
+int
+ferry_remove_start(const char *path) {
+  struct stat st;
+
+  if(lstat(path, &st)) {
     return -1;
   }
-  pthread_attr_destroy(&attr);
 
-  return id;
+  return ferry_job_start(FERRY_REMOVE, path, "", ferry_remove_thread);
 }
 
 
@@ -593,56 +723,6 @@ ferry_du(const char *path, uint64_t *bytes, uint64_t *files, uint64_t *dirs) {
   closedir(dir);
 
   return err;
-}
-
-
-int
-ferry_rmtree(const char *path, uint64_t *files, uint64_t *dirs) {
-  struct dirent *ent;
-  struct stat st;
-  DIR *dir;
-  char *p;
-  int err = 0;
-
-  if(lstat(path, &st)) {
-    return -1;
-  }
-
-  if(!S_ISDIR(st.st_mode)) {
-    if(unlink(path)) {
-      return -1;
-    }
-    *files += 1;
-    return 0;
-  }
-
-  if(!(dir=opendir(path))) {
-    return -1;
-  }
-
-  while(!err && (ent=readdir(dir))) {
-    if(ferry_is_dot(ent->d_name)) {
-      continue;
-    }
-    if(!(p=ferry_join(path, ent->d_name))) {
-      err = -1;
-    } else {
-      err = ferry_rmtree(p, files, dirs);
-      free(p);
-    }
-  }
-
-  closedir(dir);
-  if(err) {
-    return err;
-  }
-
-  if(rmdir(path)) {
-    return -1;
-  }
-  *dirs += 1;
-
-  return 0;
 }
 
 

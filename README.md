@@ -9,11 +9,11 @@ It is a drop-in replacement: same port (2121), and it kills a running
 | Command | Reply | What it does |
 |---|---|---|
 | `CPFR <src>` + `CPTO <dst>` | `250 Copy job N started` | Background recursive copy. Resumable: files already at `dst` with the same size are skipped. Checks free space first, fsyncs and size-checks every file, keeps modes and symlinks. Refuses to copy a tree into itself. A PS5 notification is shown when it ends. |
-| `JOBS [N]` | `211 job=…;state=…;pct=…;bytes=done/total;…` | Progress of one or all jobs (last 8 are kept, across connections). |
-| `CANCEL N` | `200` | Stop a running job (re-run the copy later to resume). |
+| `JOBS [N]` | `211 job=…;kind=copy\|remove;state=…;pct=…;bytes=done/total;…` | Progress of one or all jobs (last 8 are kept, across connections). |
+| `CANCEL N` | `200` | Stop a running job (re-run a copy later to resume). |
 | `DF [path]` | `213 avail=…;free=…;total=…` | Free space of the file system holding `path`. |
 | `DU [path]` | `213 bytes=…;files=…;dirs=…` | Recursive size. |
-| `RMTREE <path>` | `250 Removed N files, M dirs` | Recursive delete, no symlink following. Refuses paths shallower than 3 levels (e.g. `/data/homebrew`) and paths with `..`. |
+| `RMTREE <path>` | `250 Remove job N started` | Background recursive delete (progress in `JOBS`), no symlink following. Refuses paths shallower than 3 levels (e.g. `/data/homebrew`) and paths with `..`. Runs as a job because deleting a 180 GiB game on an extended drive takes ~9 minutes. |
 | `HASH <file>` | `213 SHA-256 <hex>` | SHA-256 computed on the console (synchronous, slow for huge files). |
 
 `RNTO` across file systems now answers `553 Cross-device rename, use SITE
